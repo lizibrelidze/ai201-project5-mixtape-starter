@@ -7,6 +7,56 @@ feature end-to-end, and calls out the organizing patterns.
 
 ---
 
+## AI usage
+
+I used an AI assistant (Claude Code) throughout this project, mainly as a way to ask
+questions about an unfamiliar codebase, help me hunt for the bugs, and pressure-test
+my understanding. Being specific about how:
+
+**What I asked it to explain / trace / summarize.**
+- To explain the `services/` layer: what each module is responsible for and what
+  each function does. This is the basis of the "Main files" section.
+- To trace data flows end-to-end — e.g. how a listen event reaches a friend's feed
+  (`record_listening_event` → `ListeningEvent` row → `get_friends_listening_now`),
+  and how adding a song to a playlist triggers a notification. Tracing route →
+  service → model out loud helped me learn the "thin route, logic in services"
+  pattern.
+- To help find and reproduce the five reported bugs, and to draft the root-cause
+  writeups once I understood each one.
+
+**What it helped me understand.** The biggest win was seeing *why* the app is
+layered the way it is — every route delegates to one service function, services
+raise `ValueError` and routes translate that to HTTP, and models expose `to_dict()`
+as the serialization boundary. Once I saw that pattern, "trace the symptom back to
+the service" became a repeatable strategy for all five issues.
+
+**Where I had to verify things myself, or where the AI was incomplete / wrong.**
+- **It tried to fix before reproducing.** On Issue #3 the assistant immediately
+  edited the search query. I made it revert and reproduce the bug against seed data
+  first — fixing before confirming the cause is guessing.
+- **Its first explanation of Issue #3 was incomplete.** The claim was "the outerjoin
+  produces duplicate rows," but when we actually called `search_songs("Anthem")` it
+  returned **one** result, not duplicates — the opposite of what was predicted. I
+  didn't accept the tidy explanation. We probed the raw SQL and found the join *does*
+  fan out to 3 rows, but the legacy `query(Song).all()` API silently de-duplicates
+  full entities, which masks it; the duplicates only surface on the newer
+  `select().scalars().all()` path. The real story was more nuanced than the first
+  answer, and I only trusted it after seeing the row counts myself.
+- **AI summaries need checking against the real code.** An early codebase summary was
+  drafted against a wrong mental model (wrong number of models, a table that doesn't
+  exist, ratings stored in the wrong place). I cross-checked it against `models.py`
+  and corrected it — a reminder that a confident-sounding summary can still be wrong.
+- **A bug it did not predict.** While running side-effect checks, a test crashed and
+  exposed a *separate* pre-existing bug in `add_to_playlist` (it inserts a
+  `playlist_entries` row without the required `position`). Reading the code alone
+  hadn't surfaced it; actually running the code did.
+
+Bottom line: the AI was most useful for orientation, tracing, and drafting, but every
+root-cause claim in this document is one I reproduced and verified by running the
+code with controlled inputs — not one I took on the assistant's word.
+
+---
+
 ## Main files and what each one does
 
 ### `app.py` — application factory + DB handle
